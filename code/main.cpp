@@ -4,11 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 int main()
 {
-#if 0
-    FILE *File = fopen("../data/san-miguel-low-poly.obj", "rb");
+    //char *InputFilename = "../data/san-miguel-low-poly.obj";
+    char *InputFilename = "../data/raw-pic.data";
+    
+    FILE *File = fopen(InputFilename, "rb");
     ASSERT(File);
     
     fseek(File, 0, SEEK_END);
@@ -18,20 +21,18 @@ int main()
     fread(Data, 1, DataSize, File);
     fclose(File);
     
-    size_t EncodedSize = 0;
-    void *EncodedData = Encode64(Data, DataSize, &EncodedSize);
-#else
+    encoder Encoder = {};
     
-    char *Data = "Hello Man";
-    size_t DataSize = strlen(Data);
+    clock_t BeginTick = clock();
+    Encoder.Encode((u8 *)Data, DataSize);
+    clock_t EndTick = clock();
     
-    range Model[256] = {};
-    f64 EncodedData = Encode64((u8 *)Data, DataSize, Model);
+    f32 CompressionTime = f32(EndTick - BeginTick) / f32(CLOCKS_PER_SEC);
+    f32 CompressionRatio = f32(DataSize)/f32(Encoder.OutputSize);
+    printf("compression time: %.2fs, compression ratio: %.5f\n", CompressionTime, CompressionRatio);
     
-    size_t DecodedSize = 0;
-    u8 *DecodedData = Decode64(EncodedData, DataSize, Model);
+    u8 *DecodedData = Decode(Encoder.OutputStream, Encoder.OutputSize);
     
-#endif
-    
+    getchar();
     return 0;
 }

@@ -1,0 +1,3 @@
+- embed model and byte count in encoded data []
+- decoder []
+- async API []
