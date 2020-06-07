@@ -62,6 +62,9 @@ int main()
         printf("First error occuring at byte %zu\n", FirstErrorOccuring);
     }
     
+    printf("compression throughput: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/CompressionTime);
+    printf("decompression throughput: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/DecompressionTime);
+    
     getchar();
     return 0;
 }

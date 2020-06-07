@@ -22,8 +22,8 @@ Scale Bits <= CodeBits - 2
 
 */
 
-#define CODE_BIT_COUNT 17
-#define SCALE_BIT_COUNT 15
+#define CODE_BIT_COUNT 16
+#define SCALE_BIT_COUNT 14
 
 #pragma pack(push, 1)
 struct header
@@ -208,6 +208,12 @@ decoder::InputBit()
     return Bit;
 }
 
+struct interval
+{
+    u32 Min;
+    u32 Max;
+};
+
 u8 *
 decoder::Decode(u8 *Bits, size_t EncodedSize)
 {
@@ -225,6 +231,30 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     u32 OneFourth = Half >> 1;
     u32 ThreeFourths = OneFourth * 3;
     
+    //NOTE(chen): precompute probability->symbol-index table
+    interval Intervals[256] = {};
+    for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
+    {
+        Intervals[SymbolI].Min = SymbolI == 0? 0: Header->CumProb[SymbolI-1];
+        Intervals[SymbolI].Max = Header->CumProb[SymbolI];
+    }
+    u8 *SymbolIndices = (u8 *)calloc(Scale, 1);
+    for (size_t I = 0; I < Scale; ++I)
+    {
+        int SymbolIndex = -1;
+        for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
+        {
+            interval Interval = Intervals[SymbolI];
+            if (I >= Interval.Min && I < Interval.Max)
+            {
+                SymbolIndex = SymbolI;
+                break;
+            }
+        }
+        ASSERT(SymbolIndex != -1);
+        SymbolIndices[I] = u8(SymbolIndex);
+    }
+    
     u32 Low = 0;
     u32 High = CodeBitMask;
     
@@ -240,37 +270,18 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         //TODO(chen): wtf?
         u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
         
-        int SymbolIndex = -1;
-        for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-        {
-            u32 IntervalMin = SymbolI == 0? 0: Header->CumProb[SymbolI-1];
-            u32 IntervalMax = Header->CumProb[SymbolI];
-            if (Prob >= IntervalMin && Prob < IntervalMax)
-            {
-                ASSERT(Low < High);
-                High = Low + (Range * IntervalMax) / Scale - 1;
-                Low = Low + (Range * IntervalMin) / Scale;
-                ASSERT(Low <= High);
-                SymbolIndex = SymbolI;
-                break;
-            }
-        }
-        ASSERT(SymbolIndex != -1);
+        int SymbolIndex = SymbolIndices[Prob];
+        interval Interval = Intervals[SymbolIndex];
+        ASSERT(Low < High);
+        High = Low + (Range * Interval.Max) / Scale - 1;
+        Low = Low + (Range * Interval.Min) / Scale;
+        ASSERT(Low <= High);
         
         for (;;)
         {
-            if (High < Half) // same MSB
+            if (Low >= Half || High < Half) // same MSB
             {
                 // need shifting
-            }
-            else if (Low >= Half) // same MSB
-            {
-                //TODO(chen): pretty sure I remember there was an implicit
-                //            subtraction in the encoder somewhere ... find 
-                //            it.
-                High -= Half;
-                Low -= Half;
-                EncodedValue -= Half;
             }
             else if (Low >= OneFourth && High < ThreeFourths) // near convergence
             {
@@ -293,5 +304,6 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         Output[ByteI] = DecodedByte;
     }
     
+    size_t BytesLeft = EncodedSize - BytesRead;
     return Output;
 }

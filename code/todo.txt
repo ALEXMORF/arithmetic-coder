@@ -1,5 +1,12 @@
 - embed model and byte count in encoded data [x]
-- decoder []
+- decoder [x]
+
+- last two bytes always decoded incorrectly []
+- investigate weird expression for rescaling value during decoding []
+
+- corner cases: not enough inputs for the initial 32-bits []
+- corner cases: something else i forgot []
+
 - test with various dataset []
 - profiling []
 -   with/without ASSERT []
