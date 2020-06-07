@@ -188,7 +188,14 @@ encoder::Encode(u8 *Data, size_t DataSize)
         }
     }
     
-    //TODO(chen): might want to push low bits instead of zeros
+    //NOTE(chen): push the rest of low bits
+    for (int BitI = 0; BitI < CODE_BIT_COUNT; ++BitI)
+    {
+        u32 Mask = 1 << (CODE_BIT_COUNT - BitI - 1);
+        u8 Bit = (Low & Mask)? 1: 0;
+        OutputBit(Bit);
+    }
+    
     //NOTE(chen): make sure our last byte flushes
     if (BitsFilled != 0)
     {
