@@ -15,7 +15,7 @@ int main()
     ASSERT(File);
     
     fseek(File, 0, SEEK_END);
-    int DataSize = ftell(File);
+    size_t DataSize = ftell(File);
     rewind(File);
     u8 *Data = (u8 *)calloc(DataSize, 1);
     fread(Data, 1, DataSize, File);
@@ -31,7 +31,36 @@ int main()
     f32 CompressionRatio = f32(DataSize)/f32(Encoder.OutputSize);
     printf("compression time: %.2fs, compression ratio: %.5f\n", CompressionTime, CompressionRatio);
     
-    u8 *DecodedData = Decode(Encoder.OutputStream, Encoder.OutputSize);
+    decoder Decoder = {};
+    
+    size_t DecodedSize = 0;
+    BeginTick = clock();
+    u8 *DecodedData = Decoder.Decode(Encoder.OutputStream, Encoder.OutputSize);
+    EndTick = clock();
+    f32 DecompressionTime = f32(EndTick - BeginTick) / f32(CLOCKS_PER_SEC);
+    printf("decompression time: %.2fs\n", DecompressionTime);
+    
+    size_t CorrectByteCount = 0;
+    size_t FirstErrorOccuring = ~0ull;
+    for (size_t ByteI = 0; ByteI < DataSize; ++ByteI)
+    {
+        if (DecodedData[ByteI] == Data[ByteI])
+        {
+            CorrectByteCount += 1;
+        }
+        else
+        {
+            if (FirstErrorOccuring == (~0ull))
+            {
+                FirstErrorOccuring = ByteI;
+            }
+        }
+    }
+    printf("accuracy = %zu/%zu\n", CorrectByteCount, DataSize);
+    if (FirstErrorOccuring != (~0ull))
+    {
+        printf("First error occuring at byte %zu\n", FirstErrorOccuring);
+    }
     
     getchar();
     return 0;

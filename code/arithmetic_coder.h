@@ -6,7 +6,7 @@
 
 precision boundary calculation:
 
-High = Low + (Range * IntervalMax) / Scale - 1;
+High = Low + (Range * IntervalMax) / Scale;
         Low = Low + (Range * IntervalMin) / Scale;
         
 Range bits = [CodeBits-2, CodeBits] (no closer than 1/4 invariant)
@@ -46,6 +46,18 @@ struct encoder
     void Model(u8 *Data, size_t DataSize);
     __forceinline void OutputBit(u8 Bit);
     u8 *Encode(u8 *Data, size_t DataSize);
+};
+
+struct decoder
+{
+    u8 *InputStream;
+    u8 StagingByte;
+    size_t BytesRead;
+    int BitsLeft;
+    u8 BitMask;
+    
+    __forceinline u8 InputBit();
+    u8 *Decode(u8 *Data, size_t DataSize);
 };
 
 void
@@ -121,11 +133,13 @@ encoder::Encode(u8 *Data, size_t DataSize)
     *((header *)OutputStream) = Header;
     OutputSize = OutputCap;
     
-    u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
+    u32 Scale = Header.CumProb[255];
     u32 CodeBitMask = (1 << CODE_BIT_COUNT) - 1;
     u32 MsbBitMask = (1 << (CODE_BIT_COUNT-1));
     u32 SecondMsbBitMask = (1 << (CODE_BIT_COUNT-2));
-    u32 Half = CodeBitMask >> 1;
+    u32 Half = MsbBitMask;
+    u32 OneFourth = Half >> 1;
+    u32 ThreeFourths = OneFourth * 3;
     
     u32 Low = 0;
     u32 High = CodeBitMask;
@@ -135,62 +149,149 @@ encoder::Encode(u8 *Data, size_t DataSize)
         u8 Symbol = Data[ByteI];
         u32 IntervalMin = Symbol == 0? 0: CumProb[Symbol-1];
         u32 IntervalMax = CumProb[Symbol];
+        ASSERT(IntervalMin < IntervalMax);
         
         ASSERT(Low < High);
-        u32 Range = High - Low;
-        High = Low + (Range * IntervalMax) / Scale;
+        u32 Range = High - Low + 1;
+        High = Low + (Range * IntervalMax) / Scale - 1;
         Low = Low + (Range * IntervalMin) / Scale;
-        ASSERT(Low < High);
+        ASSERT(Low <= High);
         
         for (;;)
         {
-            if (Low > Half || High <= Half) // same MSB
+            if (Low >= Half || High < Half) // same MSB
             {
-                u32 MSB = High & MsbBitMask;
-                Low = (Low << 1) & CodeBitMask;
-                High = ((High << 1) | 1) & CodeBitMask;
-                
-                u8 FirstBit = MSB? 1: 0;
-                u8 PendingBit = FirstBit? 0: 1;
+                u8 FirstBit = (High & MsbBitMask)? 1: 0;
                 OutputBit(FirstBit);
+                
+                u8 PendingBit = !FirstBit;
                 for (size_t I = 0; I < BitsPending; ++I)
                 {
                     OutputBit(PendingBit);
                 }
+                
                 BitsPending = 0;
             }
-            else if ((Low & SecondMsbBitMask) && ((~High) & SecondMsbBitMask)) // same second MSB
+            else if (Low >= OneFourth && High < ThreeFourths) // near-convergence
             {
                 BitsPending += 1;
-                
-                Low <<= 1;
-                Low &= ~MsbBitMask;
-                High = (High << 1) | 1;
-                High |= MsbBitMask;
-                
-                Low &= CodeBitMask;
-                High &= CodeBitMask;
+                Low -= OneFourth;
+                High -= OneFourth;
             }
             else
             {
                 break;
             }
+            
+            Low = (Low << 1) & CodeBitMask;
+            High = ((High << 1) | 1) & CodeBitMask;
         }
     }
-    
-    //TODO(chen): push out remaining bytes ?????
     
     return OutputStream;
 }
 
-u8 *Decode(u8 *Bits, size_t EncodedSize)
+__forceinline u8
+decoder::InputBit()
 {
-    u8 *Output = 0;
+    if (BitsLeft == 0)
+    {
+        StagingByte = InputStream[BytesRead++];
+        BitsLeft = 8;
+        BitMask = 1 << 7;
+    }
     
+    ASSERT(BitMask != 0);
+    u8 Bit = (StagingByte & BitMask)? 1: 0;
+    BitMask >>= 1;
+    BitsLeft -= 1;
+    return Bit;
+}
+
+u8 *
+decoder::Decode(u8 *Bits, size_t EncodedSize)
+{
     header *Header = (header *)Bits;
     Bits += sizeof(header);
+    InputStream = Bits;
     
+    u8 *Output = (u8 *)calloc(Header->EncodedByteCount, 1);
     
+    u32 Scale = Header->CumProb[255];
+    u32 CodeBitMask = (1 << CODE_BIT_COUNT) - 1;
+    u32 MsbBitMask = (1 << (CODE_BIT_COUNT-1));
+    u32 SecondMsbBitMask = (1 << (CODE_BIT_COUNT-2));
+    u32 Half = MsbBitMask;
+    u32 OneFourth = Half >> 1;
+    u32 ThreeFourths = OneFourth * 3;
+    
+    u32 Low = 0;
+    u32 High = CodeBitMask;
+    
+    u32 EncodedValue = 0;
+    for (int BitI = 0; BitI < CODE_BIT_COUNT; ++BitI)
+    {
+        EncodedValue = (EncodedValue << 1) | InputBit();
+    }
+    
+    for (size_t ByteI = 0; ByteI < Header->EncodedByteCount; ++ByteI)
+    {
+        u32 Range = High - Low + 1;
+        //TODO(chen): wtf?
+        u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
+        
+        int SymbolIndex = -1;
+        for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
+        {
+            u32 IntervalMin = SymbolI == 0? 0: Header->CumProb[SymbolI-1];
+            u32 IntervalMax = Header->CumProb[SymbolI];
+            if (Prob >= IntervalMin && Prob < IntervalMax)
+            {
+                ASSERT(Low < High);
+                High = Low + (Range * IntervalMax) / Scale - 1;
+                Low = Low + (Range * IntervalMin) / Scale;
+                ASSERT(Low <= High);
+                SymbolIndex = SymbolI;
+                break;
+            }
+        }
+        ASSERT(SymbolIndex != -1);
+        
+        for (;;)
+        {
+            if (High < Half) // same MSB
+            {
+                // need shifting
+            }
+            else if (Low >= Half) // same MSB
+            {
+                //TODO(chen): pretty sure I remember there was an implicit
+                //            subtraction in the encoder somewhere ... find 
+                //            it.
+                High -= Half;
+                Low -= Half;
+                EncodedValue -= Half;
+            }
+            else if (Low >= OneFourth && High < ThreeFourths) // near convergence
+            {
+                Low -= OneFourth;
+                High -= OneFourth;
+                EncodedValue -= OneFourth;
+            }
+            else
+            {
+                break;
+            }
+            
+            Low = (Low << 1) & CodeBitMask;
+            High = ((High << 1) | 1) & CodeBitMask;
+            EncodedValue = ((EncodedValue << 1) | InputBit()) & CodeBitMask;
+        }
+        ASSERT(EncodedValue <= High);
+        
+        u8 DecodedByte = u8(SymbolIndex);
+        Output[ByteI] = DecodedByte;
+    }
     
     return Output;
 }
