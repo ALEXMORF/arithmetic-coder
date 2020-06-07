@@ -184,7 +184,7 @@ encoder::Encode(u8 *Data, size_t DataSize)
             }
             
             Low = (Low << 1) & CodeBitMask;
-            High = ((High << 1) | 1) & CodeBitMask;
+            High = ((High << 1) + 1) & CodeBitMask;
         }
     }
     
@@ -270,7 +270,7 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         //TODO(chen): wtf?
         u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
         
-        int SymbolIndex = SymbolIndices[Prob];
+        u8 SymbolIndex = SymbolIndices[Prob];
         interval Interval = Intervals[SymbolIndex];
         ASSERT(Low < High);
         High = Low + (Range * Interval.Max) / Scale - 1;
@@ -279,9 +279,15 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         
         for (;;)
         {
-            if (Low >= Half || High < Half) // same MSB
+            if (High < Half) // same MSB
             {
                 // need shifting
+            }
+            else if (Low >= Half) // same MSB
+            {
+                Low -= Half;
+                High -= Half;
+                EncodedValue -= Half;
             }
             else if (Low >= OneFourth && High < ThreeFourths) // near convergence
             {
@@ -294,9 +300,9 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
                 break;
             }
             
-            Low = (Low << 1) & CodeBitMask;
-            High = ((High << 1) | 1) & CodeBitMask;
-            EncodedValue = ((EncodedValue << 1) | InputBit()) & CodeBitMask;
+            Low <<= 1;
+            High = (High << 1) + 1;
+            EncodedValue = (EncodedValue << 1) + InputBit();
         }
         ASSERT(EncodedValue <= High);
         
