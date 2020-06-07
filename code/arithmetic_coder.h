@@ -188,6 +188,18 @@ encoder::Encode(u8 *Data, size_t DataSize)
         }
     }
     
+    //TODO(chen): might want to push low bits instead of zeros
+    //NOTE(chen): make sure our last byte flushes
+    if (BitsFilled != 0)
+    {
+        int ZeroBits = 8 - BitsFilled;
+        for (int BitI = 0; BitI < ZeroBits; ++BitI)
+        {
+            OutputBit(0);
+        }
+        ASSERT(BitsFilled == 0);
+    }
+    
     return OutputStream;
 }
 
