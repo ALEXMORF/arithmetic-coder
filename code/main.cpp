@@ -8,8 +8,9 @@
 
 int main()
 {
+    char *InputFilename = "../data/san-miguel.obj";
     //char *InputFilename = "../data/san-miguel-low-poly.obj";
-    char *InputFilename = "../data/raw-pic.data";
+    //char *InputFilename = "../data/raw-pic.data";
     
     FILE *File = fopen(InputFilename, "rb");
     ASSERT(File);
@@ -62,8 +63,9 @@ int main()
         printf("First error occuring at byte %zu\n", FirstErrorOccuring);
     }
     
-    printf("compression throughput: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/CompressionTime);
-    printf("decompression throughput: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/DecompressionTime);
+    u32 BytesPerMB = 1024*1024;
+    printf("compression throughput: %.2fmb/s\n", f32(DataSize)/f32(BytesPerMB)/CompressionTime);
+    printf("decompression throughput: %.2fmb/s\n", f32(DataSize)/f32(BytesPerMB)/DecompressionTime);
     
     getchar();
     return 0;

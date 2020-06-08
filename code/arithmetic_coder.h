@@ -6,7 +6,7 @@
 
 precision boundary calculation:
 
-High = Low + (Range * IntervalMax) / Scale;
+High = Low + (Range * IntervalMax) / Scale -1;
         Low = Low + (Range * IntervalMin) / Scale;
         
 Range bits = [CodeBits-2, CodeBits] (no closer than 1/4 invariant)
@@ -22,6 +22,8 @@ Scale Bits <= CodeBits - 2
 
 */
 
+//NOTE(chen): shaving off one additional 2 bits due to possible overflow
+//            from "Range = High - Low + 1"
 #define CODE_BIT_COUNT 16
 #define SCALE_BIT_COUNT 14
 
@@ -188,19 +190,22 @@ encoder::Encode(u8 *Data, size_t DataSize)
         }
     }
     
-    //NOTE(chen): push the rest of low bits
-    for (int BitI = 0; BitI < CODE_BIT_COUNT; ++BitI)
+    if (Low < OneFourth)
     {
-        u32 Mask = 1 << (CODE_BIT_COUNT - BitI - 1);
-        u8 Bit = (Low & Mask)? 1: 0;
-        OutputBit(Bit);
+        OutputBit(0);
+        OutputBit(1);
+    }
+    else
+    {
+        OutputBit(1);
+        OutputBit(0);
     }
     
     //NOTE(chen): make sure our last byte flushes
     if (BitsFilled != 0)
     {
-        int ZeroBits = 8 - BitsFilled;
-        for (int BitI = 0; BitI < ZeroBits; ++BitI)
+        int PadBits = 8 - BitsFilled;
+        for (int BitI = 0; BitI < PadBits; ++BitI)
         {
             OutputBit(0);
         }
