@@ -10,6 +10,9 @@ int main()
 {
     char *InputFilename = "../data/san-miguel.obj";
     //char *InputFilename = "../data/san-miguel-low-poly.obj";
+    //char *InputFilename = "../data/conference.obj";
+    //char *InputFilename = "../data/light_probes.data";
+    //char *InputFilename = "../data/foliage.data";
     //char *InputFilename = "../data/raw-pic.data";
     
     FILE *File = fopen(InputFilename, "rb");

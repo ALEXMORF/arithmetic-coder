@@ -30,22 +30,35 @@ Scale Bits <= CodeBits - 2
 #pragma pack(push, 1)
 struct header
 {
-    u32 CumProb[256];
     size_t EncodedByteCount;
 };
 #pragma pack(pop)
 
-struct encoder
+struct interval
+{
+    u8 Symbol;
+    
+    u32 Min;
+    u32 Max;
+};
+
+struct model
 {
     u32 CumProb[256];
     
+    __forceinline void Init();
+    __forceinline void Update(u8 Symbol);
+    __forceinline interval GetInterval(u32 Prob);
+};
+
+struct encoder
+{
     u8 *OutputStream;
     size_t OutputCap;
     size_t OutputSize;
     u8 StagingByte;
     int BitsFilled;
     
-    void Model(u8 *Data, size_t DataSize);
     __forceinline void OutputBit(u8 Bit);
     u8 *Encode(u8 *Data, size_t DataSize);
 };
@@ -61,43 +74,6 @@ struct decoder
     __forceinline u8 InputBit();
     u8 *Decode(u8 *Data, size_t DataSize);
 };
-
-void
-encoder::Model(u8 *Data, size_t DataSize)
-{
-    u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
-    
-    size_t FreqTable[256] = {};
-    for (size_t ByteI = 0; ByteI < DataSize; ++ByteI)
-    {
-        FreqTable[Data[ByteI]] += 1;
-    }
-    
-    size_t CumTable[256] = {};
-    for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-    {
-        size_t Cum = SymbolI > 0? CumTable[SymbolI-1]: 0;
-        CumTable[SymbolI] = FreqTable[SymbolI] + Cum;
-    }
-    
-    u32 Prob[256] = {};
-    for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-    {
-        Prob[SymbolI] = u32((FreqTable[SymbolI] * Scale) / DataSize);
-        
-        if (FreqTable[SymbolI] != 0 && Prob[SymbolI] == 0)
-        {
-            Prob[SymbolI] = 1;
-        }
-    }
-    
-    CumProb[256] = {};
-    for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-    {
-        u32 Cum = SymbolI == 0? 0: CumProb[SymbolI-1];
-        CumProb[SymbolI] = Cum + Prob[SymbolI];
-    }
-}
 
 __forceinline void 
 encoder::OutputBit(u8 Bit)
@@ -118,24 +94,86 @@ encoder::OutputBit(u8 Bit)
     }
 }
 
+__forceinline void
+model::Init()
+{
+    for (int I = 0; I < 256; ++I)
+    {
+        u32 Sum = I == 0? 0: CumProb[I-1];
+        CumProb[I] = Sum + 1;
+    }
+}
+
+__forceinline void
+model::Update(u8 Symbol)
+{
+    for (int I = Symbol; I < 256; ++I)
+    {
+        CumProb[I] += 1;
+    }
+    
+    //NOTE(chen): if bits exceed, rescale by 1/2
+    u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
+    if (CumProb[255] > Scale)
+    {
+        u32 Prob[256] = {};
+        for (int I = 0; I < 256; ++I)
+        {
+            u32 PrevCum = I == 0? 0: CumProb[I-1];
+            Prob[I] = CumProb[I] - PrevCum;
+            
+            bool IsNonZero = Prob[I] != 0;
+            Prob[I] /= 2;
+            if (IsNonZero && Prob[I] == 0)
+            {
+                Prob[I] = 1;
+            }
+        }
+        
+        for (int I = 0; I < 256; ++I)
+        {
+            u32 PrevCum = I == 0? 0: CumProb[I-1];
+            CumProb[I] = PrevCum + Prob[I];
+        }
+    }
+}
+
+__forceinline interval 
+model::GetInterval(u32 Prob)
+{
+    interval Result = {};
+    
+    for (int I = 0; I < 256; ++I)
+    {
+        u32 Min = I == 0? 0: CumProb[I-1];
+        u32 Max = CumProb[I];
+        if (Prob >= Min && Prob < Max)
+        {
+            Result.Min = Min;
+            Result.Max = Max;
+            Result.Symbol = u8(I);
+            return Result;
+        }
+    }
+    
+    ASSERT(!"TODO(chen): unreachable");
+    return Result;
+}
+
 u8 *
 encoder::Encode(u8 *Data, size_t DataSize)
 {
-    Model(Data, DataSize);
-    
     header Header = {};
-    for (int I = 0; I < 256; ++I)
-    {
-        Header.CumProb[I] = CumProb[I];
-    }
     Header.EncodedByteCount = DataSize;
+    
+    model Model = {};
+    Model.Init();
     
     OutputCap = sizeof(Header);
     OutputStream = (u8 *)calloc(OutputCap, 1);
     *((header *)OutputStream) = Header;
     OutputSize = OutputCap;
     
-    u32 Scale = Header.CumProb[255];
     u32 CodeBitMask = (1 << CODE_BIT_COUNT) - 1;
     u32 MsbBitMask = (1 << (CODE_BIT_COUNT-1));
     u32 SecondMsbBitMask = (1 << (CODE_BIT_COUNT-2));
@@ -149,12 +187,14 @@ encoder::Encode(u8 *Data, size_t DataSize)
     for (size_t ByteI = 0; ByteI < DataSize; ++ByteI)
     {
         u8 Symbol = Data[ByteI];
-        u32 IntervalMin = Symbol == 0? 0: CumProb[Symbol-1];
-        u32 IntervalMax = CumProb[Symbol];
+        
+        u32 IntervalMin = Symbol == 0? 0: Model.CumProb[Symbol-1];
+        u32 IntervalMax = Model.CumProb[Symbol];
         ASSERT(IntervalMin < IntervalMax);
         
         ASSERT(Low < High);
         u32 Range = High - Low + 1;
+        u32 Scale = Model.CumProb[255];
         High = Low + (Range * IntervalMax) / Scale - 1;
         Low = Low + (Range * IntervalMin) / Scale;
         ASSERT(Low <= High);
@@ -188,6 +228,8 @@ encoder::Encode(u8 *Data, size_t DataSize)
             Low = (Low << 1) & CodeBitMask;
             High = ((High << 1) + 1) & CodeBitMask;
         }
+        
+        Model.Update(Symbol);
     }
     
     if (Low < OneFourth)
@@ -232,12 +274,6 @@ decoder::InputBit()
     return Bit;
 }
 
-struct interval
-{
-    u32 Min;
-    u32 Max;
-};
-
 u8 *
 decoder::Decode(u8 *Bits, size_t EncodedSize)
 {
@@ -245,39 +281,17 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     Bits += sizeof(header);
     InputStream = Bits;
     
+    model Model = {};
+    Model.Init();
+    
     u8 *Output = (u8 *)calloc(Header->EncodedByteCount, 1);
     
-    u32 Scale = Header->CumProb[255];
     u32 CodeBitMask = (1 << CODE_BIT_COUNT) - 1;
     u32 MsbBitMask = (1 << (CODE_BIT_COUNT-1));
     u32 SecondMsbBitMask = (1 << (CODE_BIT_COUNT-2));
     u32 Half = MsbBitMask;
     u32 OneFourth = Half >> 1;
     u32 ThreeFourths = OneFourth * 3;
-    
-    //NOTE(chen): precompute probability->symbol-index table
-    interval Intervals[256] = {};
-    for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-    {
-        Intervals[SymbolI].Min = SymbolI == 0? 0: Header->CumProb[SymbolI-1];
-        Intervals[SymbolI].Max = Header->CumProb[SymbolI];
-    }
-    u8 *SymbolIndices = (u8 *)calloc(Scale, 1);
-    for (size_t I = 0; I < Scale; ++I)
-    {
-        int SymbolIndex = -1;
-        for (int SymbolI = 0; SymbolI < 256; ++SymbolI)
-        {
-            interval Interval = Intervals[SymbolI];
-            if (I >= Interval.Min && I < Interval.Max)
-            {
-                SymbolIndex = SymbolI;
-                break;
-            }
-        }
-        ASSERT(SymbolIndex != -1);
-        SymbolIndices[I] = u8(SymbolIndex);
-    }
     
     u32 Low = 0;
     u32 High = CodeBitMask;
@@ -291,11 +305,11 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     for (size_t ByteI = 0; ByteI < Header->EncodedByteCount; ++ByteI)
     {
         u32 Range = High - Low + 1;
+        u32 Scale = Model.CumProb[255];
         //TODO(chen): wtf?
         u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
         
-        u8 SymbolIndex = SymbolIndices[Prob];
-        interval Interval = Intervals[SymbolIndex];
+        interval Interval = Model.GetInterval(Prob);
         ASSERT(Low < High);
         High = Low + (Range * Interval.Max) / Scale - 1;
         Low = Low + (Range * Interval.Min) / Scale;
@@ -330,10 +344,13 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         }
         ASSERT(EncodedValue <= High);
         
-        u8 DecodedByte = u8(SymbolIndex);
+        u8 DecodedByte = Interval.Symbol;
         Output[ByteI] = DecodedByte;
+        
+        Model.Update(DecodedByte);
     }
     
     size_t BytesLeft = EncodedSize - BytesRead;
     return Output;
 }
+

@@ -1,7 +1,10 @@
 - embed model and byte count in encoded data [x]
 - decoder [x]
 
-- last two bytes always decoded incorrectly []
+- last two bytes always decoded incorrectly [x]
+
+- binary interval search []
+
 - investigate weird expression for rescaling value during decoding []
 
 - corner cases: not enough inputs for the initial 32-bits []
