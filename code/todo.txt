@@ -3,6 +3,8 @@
 
 - last two bytes always decoded incorrectly [x]
 
+- BUG: san-miguel.obj fails to compress with an order-0 model []
+
 - binary interval search []
 
 - investigate weird expression for rescaling value during decoding []
