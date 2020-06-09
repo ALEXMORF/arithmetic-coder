@@ -42,13 +42,18 @@ struct interval
     u32 Max;
 };
 
+#define MODEL_ORDER 2
+
 struct model
 {
-    u32 CumProb[256];
+    int Context;
+    u32 CumProb[1 << (MODEL_ORDER*8)][256];
     
     __forceinline void Init();
     __forceinline void Update(u8 Symbol);
     __forceinline interval GetInterval(u32 Prob);
+    
+    inline size_t GetContextSize();
 };
 
 struct encoder
@@ -75,6 +80,12 @@ struct decoder
     u8 *Decode(u8 *Data, size_t DataSize);
 };
 
+inline size_t 
+model::GetContextSize()
+{
+    return 1 << (MODEL_ORDER*8);
+}
+
 __forceinline void 
 encoder::OutputBit(u8 Bit)
 {
@@ -97,10 +108,13 @@ encoder::OutputBit(u8 Bit)
 __forceinline void
 model::Init()
 {
-    for (int I = 0; I < 256; ++I)
+    for (int ContextI = 0; ContextI < GetContextSize(); ++ContextI)
     {
-        u32 Sum = I == 0? 0: CumProb[I-1];
-        CumProb[I] = Sum + 1;
+        for (int I = 0; I < 256; ++I)
+        {
+            u32 Sum = I == 0? 0: CumProb[ContextI][I-1];
+            CumProb[ContextI][I] = Sum + 1;
+        }
     }
 }
 
@@ -109,18 +123,18 @@ model::Update(u8 Symbol)
 {
     for (int I = Symbol; I < 256; ++I)
     {
-        CumProb[I] += 1;
+        CumProb[Context][I] += 1;
     }
     
     //NOTE(chen): if bits exceed, rescale by 1/2
     u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
-    if (CumProb[255] > Scale)
+    if (CumProb[Context][255] > Scale)
     {
         u32 Prob[256] = {};
         for (int I = 0; I < 256; ++I)
         {
-            u32 PrevCum = I == 0? 0: CumProb[I-1];
-            Prob[I] = CumProb[I] - PrevCum;
+            u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
+            Prob[I] = CumProb[Context][I] - PrevCum;
             
             bool IsNonZero = Prob[I] != 0;
             Prob[I] /= 2;
@@ -132,10 +146,12 @@ model::Update(u8 Symbol)
         
         for (int I = 0; I < 256; ++I)
         {
-            u32 PrevCum = I == 0? 0: CumProb[I-1];
-            CumProb[I] = PrevCum + Prob[I];
+            u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
+            CumProb[Context][I] = PrevCum + Prob[I];
         }
     }
+    
+    Context = (Context << 8 | Symbol) % GetContextSize();
 }
 
 __forceinline interval 
@@ -145,8 +161,8 @@ model::GetInterval(u32 Prob)
     
     for (int I = 0; I < 256; ++I)
     {
-        u32 Min = I == 0? 0: CumProb[I-1];
-        u32 Max = CumProb[I];
+        u32 Min = I == 0? 0: CumProb[Context][I-1];
+        u32 Max = CumProb[Context][I];
         if (Prob >= Min && Prob < Max)
         {
             Result.Min = Min;
@@ -166,8 +182,8 @@ encoder::Encode(u8 *Data, size_t DataSize)
     header Header = {};
     Header.EncodedByteCount = DataSize;
     
-    model Model = {};
-    Model.Init();
+    model *Model = (model *)calloc(1, sizeof(model));
+    Model->Init();
     
     OutputCap = sizeof(Header);
     OutputStream = (u8 *)calloc(OutputCap, 1);
@@ -188,13 +204,13 @@ encoder::Encode(u8 *Data, size_t DataSize)
     {
         u8 Symbol = Data[ByteI];
         
-        u32 IntervalMin = Symbol == 0? 0: Model.CumProb[Symbol-1];
-        u32 IntervalMax = Model.CumProb[Symbol];
+        u32 IntervalMin = Symbol == 0? 0: Model->CumProb[Model->Context][Symbol-1];
+        u32 IntervalMax = Model->CumProb[Model->Context][Symbol];
         ASSERT(IntervalMin < IntervalMax);
         
         ASSERT(Low < High);
         u32 Range = High - Low + 1;
-        u32 Scale = Model.CumProb[255];
+        u32 Scale = Model->CumProb[Model->Context][255];
         High = Low + (Range * IntervalMax) / Scale - 1;
         Low = Low + (Range * IntervalMin) / Scale;
         ASSERT(Low <= High);
@@ -229,7 +245,7 @@ encoder::Encode(u8 *Data, size_t DataSize)
             High = ((High << 1) + 1) & CodeBitMask;
         }
         
-        Model.Update(Symbol);
+        Model->Update(Symbol);
     }
     
     if (Low < OneFourth)
@@ -253,6 +269,8 @@ encoder::Encode(u8 *Data, size_t DataSize)
         }
         ASSERT(BitsFilled == 0);
     }
+    
+    free(Model);
     
     return OutputStream;
 }
@@ -281,8 +299,8 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     Bits += sizeof(header);
     InputStream = Bits;
     
-    model Model = {};
-    Model.Init();
+    model *Model = (model *)calloc(1, sizeof(model));
+    Model->Init();
     
     u8 *Output = (u8 *)calloc(Header->EncodedByteCount, 1);
     
@@ -305,11 +323,11 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     for (size_t ByteI = 0; ByteI < Header->EncodedByteCount; ++ByteI)
     {
         u32 Range = High - Low + 1;
-        u32 Scale = Model.CumProb[255];
+        u32 Scale = Model->CumProb[Model->Context][255];
         //TODO(chen): wtf?
         u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
         
-        interval Interval = Model.GetInterval(Prob);
+        interval Interval = Model->GetInterval(Prob);
         ASSERT(Low < High);
         High = Low + (Range * Interval.Max) / Scale - 1;
         Low = Low + (Range * Interval.Min) / Scale;
@@ -347,10 +365,10 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         u8 DecodedByte = Interval.Symbol;
         Output[ByteI] = DecodedByte;
         
-        Model.Update(DecodedByte);
+        Model->Update(DecodedByte);
     }
     
-    size_t BytesLeft = EncodedSize - BytesRead;
+    free(Model);
     return Output;
 }
 
