@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdlib.h>
+#include <stdio.h>
 
 /*NOTE(chen):
 
@@ -260,16 +261,24 @@ encoder::Encode(u8 *Data, size_t DataSize)
         Model->Update(Symbol);
     }
     
+    BitsPending += 1;
     if (Low < OneFourth)
     {
         OutputBit(0);
-        OutputBit(1);
+        for (size_t I = 0; I < BitsPending; ++I)
+        {
+            OutputBit(1);
+        }
     }
     else
     {
         OutputBit(1);
-        OutputBit(0);
+        for (size_t I = 0; I < BitsPending; ++I)
+        {
+            OutputBit(0);
+        }
     }
+    BitsPending = 0;
     
     //NOTE(chen): make sure our last byte flushes
     if (BitsFilled != 0)
@@ -340,6 +349,7 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
         
         interval Interval = Model->GetInterval(Prob);
+        
         ASSERT(Low < High);
         High = Low + (Range * Interval.Max) / Scale - 1;
         Low = Low + (Range * Interval.Min) / Scale;
@@ -381,6 +391,7 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     }
     
     free(Model);
+    
     return Output;
 }
 

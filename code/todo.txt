@@ -5,7 +5,8 @@
 
 - binary interval search [x]
 
-- order-2 model bugged on light probe data, investigate []
+- order-2 model bugged on light probe data, investigate [x]
+-   cause: forgot to output pending bits at end of encoding [x]
 
 - investigate weird expression for rescaling value during decoding []
 
