@@ -22,10 +22,9 @@ Scale Bits <= CodeBits - 2
 
 */
 
-//NOTE(chen): shaving off one additional 2 bits due to possible overflow
-//            from "Range = High - Low + 1"
 #define CODE_BIT_COUNT 16
 #define SCALE_BIT_COUNT 14
+#define MODEL_ORDER 2
 
 #pragma pack(push, 1)
 struct header
@@ -41,8 +40,6 @@ struct interval
     u32 Min;
     u32 Max;
 };
-
-#define MODEL_ORDER 2
 
 struct model
 {
@@ -128,7 +125,7 @@ model::Update(u8 Symbol)
     
     //NOTE(chen): if bits exceed, rescale by 1/2
     u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
-    if (CumProb[Context][255] > Scale)
+    if (CumProb[Context][255] >= Scale)
     {
         u32 Prob[256] = {};
         for (int I = 0; I < 256; ++I)
@@ -150,6 +147,7 @@ model::Update(u8 Symbol)
             CumProb[Context][I] = PrevCum + Prob[I];
         }
     }
+    ASSERT(CumProb[Context][255] < Scale);
     
     Context = (Context << 8 | Symbol) % GetContextSize();
 }
@@ -159,17 +157,31 @@ model::GetInterval(u32 Prob)
 {
     interval Result = {};
     
-    for (int I = 0; I < 256; ++I)
+    int Low = 0;
+    int High = 256;
+    int Mid = (Low+High) / 2;
+    while (Low != High)
     {
-        u32 Min = I == 0? 0: CumProb[Context][I-1];
-        u32 Max = CumProb[Context][I];
-        if (Prob >= Min && Prob < Max)
+        u32 Min = Mid == 0? 0: CumProb[Context][Mid-1];
+        u32 Max = CumProb[Context][Mid];
+        
+        if (Prob < Min)
+        {
+            High = Mid;
+        }
+        else if (Prob >= Max)
+        {
+            Low = Mid+1;
+        }
+        else
         {
             Result.Min = Min;
             Result.Max = Max;
-            Result.Symbol = u8(I);
+            Result.Symbol = u8(Mid);
             return Result;
         }
+        
+        Mid = (Low + High) / 2;
     }
     
     ASSERT(!"TODO(chen): unreachable");

@@ -3,20 +3,15 @@
 
 - last two bytes always decoded incorrectly [x]
 
-- BUG: san-miguel.obj fails to compress with an order-0 model []
+- binary interval search [x]
 
-- binary interval search []
+- order-2 model bugged on light probe data, investigate []
 
 - investigate weird expression for rescaling value during decoding []
 
 - corner cases: not enough inputs for the initial 32-bits []
-- corner cases: something else i forgot []
+- corner cases: ending case []
 
 - test with various dataset []
-- profiling []
--   with/without ASSERT []
--   modelling []
--   encoding []
--   decoding []
-- try adaptive modelling []
+- better modelling []
 - async API []
