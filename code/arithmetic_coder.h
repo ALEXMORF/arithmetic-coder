@@ -25,7 +25,7 @@ Scale Bits <= CodeBits - 2
 
 #define CODE_BIT_COUNT 16
 #define SCALE_BIT_COUNT 14
-#define MODEL_ORDER 2
+#define MODEL_ORDER 16
 
 #pragma pack(push, 1)
 struct header
@@ -44,14 +44,14 @@ struct interval
 
 struct model
 {
+    u32 CumProb[1<<(1*MODEL_ORDER)][2];
     int Context;
-    u32 CumProb[1 << (MODEL_ORDER*8)][256];
     
     __forceinline void Init();
     __forceinline void Update(u8 Symbol);
     __forceinline interval GetInterval(u32 Prob);
     
-    inline size_t GetContextSize();
+    __forceinline size_t GetContextSize();
 };
 
 struct encoder
@@ -78,12 +78,6 @@ struct decoder
     u8 *Decode(u8 *Data, size_t DataSize);
 };
 
-inline size_t 
-model::GetContextSize()
-{
-    return 1 << (MODEL_ORDER*8);
-}
-
 __forceinline void 
 encoder::OutputBit(u8 Bit)
 {
@@ -108,18 +102,20 @@ model::Init()
 {
     for (int ContextI = 0; ContextI < GetContextSize(); ++ContextI)
     {
-        for (int I = 0; I < 256; ++I)
+        for (int I = 0; I < 2; ++I)
         {
             u32 Sum = I == 0? 0: CumProb[ContextI][I-1];
             CumProb[ContextI][I] = Sum + 1;
         }
     }
+    
+    Context = 0;
 }
 
 __forceinline void
 model::Update(u8 Symbol)
 {
-    for (int I = Symbol; I < 256; ++I)
+    for (int I = Symbol; I < 2; ++I)
     {
         CumProb[Context][I] += 1;
     }
@@ -127,10 +123,10 @@ model::Update(u8 Symbol)
     u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
     
     //NOTE(chen): if bits exceed, rescale by 1/2
-    if (CumProb[Context][255] >= Scale)
+    if (CumProb[Context][1] >= Scale)
     {
-        u32 Prob[256] = {};
-        for (int I = 0; I < 256; ++I)
+        u32 Prob[2] = {};
+        for (int I = 0; I < 2; ++I)
         {
             u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
             Prob[I] = CumProb[Context][I] - PrevCum;
@@ -143,15 +139,15 @@ model::Update(u8 Symbol)
             }
         }
         
-        for (int I = 0; I < 256; ++I)
+        for (int I = 0; I < 2; ++I)
         {
             u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
             CumProb[Context][I] = PrevCum + Prob[I];
         }
     }
-    ASSERT(CumProb[Context][255] < Scale);
+    ASSERT(CumProb[Context][1] < Scale);
     
-    Context = (Context << 8 | Symbol) % GetContextSize();
+    Context = ((Context << 1) | Symbol) % GetContextSize();
 }
 
 __forceinline interval 
@@ -159,35 +155,27 @@ model::GetInterval(u32 Prob)
 {
     interval Result = {};
     
-    int Low = 0;
-    int High = 256;
-    int Mid = (Low+High) / 2;
-    while (Low != High)
+    for (int I = 0; I < 2; ++I)
     {
-        u32 Min = Mid == 0? 0: CumProb[Context][Mid-1];
-        u32 Max = CumProb[Context][Mid];
-        
-        if (Prob < Min)
-        {
-            High = Mid;
-        }
-        else if (Prob >= Max)
-        {
-            Low = Mid+1;
-        }
-        else
+        u32 Min = I == 0? 0: CumProb[Context][I-1];
+        u32 Max = CumProb[Context][I];
+        if (Prob >= Min && Prob < Max)
         {
             Result.Min = Min;
             Result.Max = Max;
-            Result.Symbol = u8(Mid);
+            Result.Symbol = u8(I);
             return Result;
         }
-        
-        Mid = (Low + High) / 2;
     }
     
     ASSERT(!"TODO(chen): unreachable");
     return Result;
+}
+
+__forceinline size_t
+model::GetContextSize()
+{
+    return 1<<(1*MODEL_ORDER);
 }
 
 u8 *
@@ -216,50 +204,56 @@ encoder::Encode(u8 *Data, size_t DataSize)
     size_t BitsPending = 0;
     for (size_t ByteI = 0; ByteI < DataSize; ++ByteI)
     {
-        u8 Symbol = Data[ByteI];
-        
-        u32 IntervalMin = Symbol == 0? 0: Model->CumProb[Model->Context][Symbol-1];
-        u32 IntervalMax = Model->CumProb[Model->Context][Symbol];
-        ASSERT(IntervalMin < IntervalMax);
-        
-        ASSERT(Low < High);
-        u32 Range = High - Low + 1;
-        u32 Scale = Model->CumProb[Model->Context][255];
-        High = Low + (Range * IntervalMax) / Scale - 1;
-        Low = Low + (Range * IntervalMin) / Scale;
-        ASSERT(Low <= High);
-        
-        for (;;)
+        u8 Byte = Data[ByteI];
+        u8 BitMask = 1 << 7;
+        for (int BitI = 0; BitI < 8; ++BitI)
         {
-            if (Low >= Half || High < Half) // same MSB
+            u8 Symbol = (Byte & BitMask)? 1: 0;
+            BitMask >>= 1;
+            
+            u32 IntervalMin = Symbol == 0? 0: Model->CumProb[Model->Context][Symbol-1];
+            u32 IntervalMax = Model->CumProb[Model->Context][Symbol];
+            ASSERT(IntervalMin < IntervalMax);
+            
+            ASSERT(Low < High);
+            u32 Range = High - Low + 1;
+            u32 Scale = Model->CumProb[Model->Context][1];
+            High = Low + (Range * IntervalMax) / Scale - 1;
+            Low = Low + (Range * IntervalMin) / Scale;
+            ASSERT(Low <= High);
+            
+            for (;;)
             {
-                u8 FirstBit = (High & MsbBitMask)? 1: 0;
-                OutputBit(FirstBit);
-                
-                u8 PendingBit = !FirstBit;
-                for (size_t I = 0; I < BitsPending; ++I)
+                if (Low >= Half || High < Half) // same MSB
                 {
-                    OutputBit(PendingBit);
+                    u8 FirstBit = (High & MsbBitMask)? 1: 0;
+                    OutputBit(FirstBit);
+                    
+                    u8 PendingBit = !FirstBit;
+                    for (size_t I = 0; I < BitsPending; ++I)
+                    {
+                        OutputBit(PendingBit);
+                    }
+                    
+                    BitsPending = 0;
+                }
+                else if (Low >= OneFourth && High < ThreeFourths) // near-convergence
+                {
+                    BitsPending += 1;
+                    Low -= OneFourth;
+                    High -= OneFourth;
+                }
+                else
+                {
+                    break;
                 }
                 
-                BitsPending = 0;
-            }
-            else if (Low >= OneFourth && High < ThreeFourths) // near-convergence
-            {
-                BitsPending += 1;
-                Low -= OneFourth;
-                High -= OneFourth;
-            }
-            else
-            {
-                break;
+                Low = (Low << 1) & CodeBitMask;
+                High = ((High << 1) + 1) & CodeBitMask;
             }
             
-            Low = (Low << 1) & CodeBitMask;
-            High = ((High << 1) + 1) & CodeBitMask;
+            Model->Update(Symbol);
         }
-        
-        Model->Update(Symbol);
     }
     
     BitsPending += 1;
@@ -344,51 +338,58 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     
     for (size_t ByteI = 0; ByteI < Header->EncodedByteCount; ++ByteI)
     {
-        u32 Range = High - Low + 1;
-        u32 Scale = Model->CumProb[Model->Context][255];
-        //TODO(chen): wtf?
-        u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
+        u8 OutputByte = 0;
         
-        interval Interval = Model->GetInterval(Prob);
-        
-        ASSERT(Low < High);
-        High = Low + (Range * Interval.Max) / Scale - 1;
-        Low = Low + (Range * Interval.Min) / Scale;
-        ASSERT(Low <= High);
-        
-        for (;;)
+        for (int BitI = 0; BitI < 8; ++BitI)
         {
-            if (High < Half) // same MSB
-            {
-                // need shifting
-            }
-            else if (Low >= Half) // same MSB
-            {
-                Low -= Half;
-                High -= Half;
-                EncodedValue -= Half;
-            }
-            else if (Low >= OneFourth && High < ThreeFourths) // near convergence
-            {
-                Low -= OneFourth;
-                High -= OneFourth;
-                EncodedValue -= OneFourth;
-            }
-            else
-            {
-                break;
-            }
+            u32 Range = High - Low + 1;
+            u32 Scale = Model->CumProb[Model->Context][1];
+            //TODO(chen): wtf?
+            u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
             
-            Low <<= 1;
-            High = (High << 1) + 1;
-            EncodedValue = (EncodedValue << 1) + InputBit();
+            interval Interval = Model->GetInterval(Prob);
+            
+            ASSERT(Low < High);
+            High = Low + (Range * Interval.Max) / Scale - 1;
+            Low = Low + (Range * Interval.Min) / Scale;
+            ASSERT(Low <= High);
+            
+            for (;;)
+            {
+                if (High < Half) // same MSB
+                {
+                    // need shifting
+                }
+                else if (Low >= Half) // same MSB
+                {
+                    Low -= Half;
+                    High -= Half;
+                    EncodedValue -= Half;
+                }
+                else if (Low >= OneFourth && High < ThreeFourths) // near convergence
+                {
+                    Low -= OneFourth;
+                    High -= OneFourth;
+                    EncodedValue -= OneFourth;
+                }
+                else
+                {
+                    break;
+                }
+                
+                Low <<= 1;
+                High = (High << 1) + 1;
+                EncodedValue = (EncodedValue << 1) + InputBit();
+            }
+            ASSERT(EncodedValue <= High);
+            
+            u8 DecodedSymbol = Interval.Symbol;
+            OutputByte |= DecodedSymbol << (7-BitI);
+            
+            Model->Update(DecodedSymbol);
         }
-        ASSERT(EncodedValue <= High);
         
-        u8 DecodedByte = Interval.Symbol;
-        Output[ByteI] = DecodedByte;
-        
-        Model->Update(DecodedByte);
+        Output[ByteI] = OutputByte;
     }
     
     free(Model);
