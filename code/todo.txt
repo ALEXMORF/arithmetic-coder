@@ -9,10 +9,15 @@
 -   cause: forgot to output pending bits at end of encoding [x]
 
 - investigate weird expression for rescaling value during decoding []
+- understand the synchronization between encoder and decoder []
+
+- better modelling []
+
+- optimize Model->Update() []
 
 - corner cases: not enough inputs for the initial 32-bits []
 - corner cases: ending case []
 
 - test with various dataset []
-- better modelling []
+
 - async API []

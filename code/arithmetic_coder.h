@@ -124,8 +124,9 @@ model::Update(u8 Symbol)
         CumProb[Context][I] += 1;
     }
     
-    //NOTE(chen): if bits exceed, rescale by 1/2
     u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
+    
+    //NOTE(chen): if bits exceed, rescale by 1/2
     if (CumProb[Context][255] >= Scale)
     {
         u32 Prob[256] = {};
