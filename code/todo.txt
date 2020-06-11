@@ -8,7 +8,11 @@
 - order-2 model bugged on light probe data, investigate [x]
 -   cause: forgot to output pending bits at end of encoding [x]
 
-- bitwise encoding []
+- bitwise encoding [x]
+
+- bitwise processing optimizations []
+
+- bitwise modelling []
 
 - investigate weird expression for rescaling value during decoding []
 

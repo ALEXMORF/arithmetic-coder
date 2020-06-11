@@ -25,7 +25,7 @@ Scale Bits <= CodeBits - 2
 
 #define CODE_BIT_COUNT 16
 #define SCALE_BIT_COUNT 14
-#define MODEL_ORDER 16
+#define MODEL_ORDER 24
 
 #pragma pack(push, 1)
 struct header
@@ -49,7 +49,6 @@ struct model
     
     __forceinline void Init();
     __forceinline void Update(u8 Symbol);
-    __forceinline interval GetInterval(u32 Prob);
     
     __forceinline size_t GetContextSize();
 };
@@ -125,51 +124,13 @@ model::Update(u8 Symbol)
     //NOTE(chen): if bits exceed, rescale by 1/2
     if (CumProb[Context][1] >= Scale)
     {
-        u32 Prob[2] = {};
-        for (int I = 0; I < 2; ++I)
-        {
-            u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
-            Prob[I] = CumProb[Context][I] - PrevCum;
-            
-            bool IsNonZero = Prob[I] != 0;
-            Prob[I] /= 2;
-            if (IsNonZero && Prob[I] == 0)
-            {
-                Prob[I] = 1;
-            }
-        }
-        
-        for (int I = 0; I < 2; ++I)
-        {
-            u32 PrevCum = I == 0? 0: CumProb[Context][I-1];
-            CumProb[Context][I] = PrevCum + Prob[I];
-        }
+        //NOTE(chen): just reset
+        CumProb[Context][0] = 1;
+        CumProb[Context][1] = 2;
     }
     ASSERT(CumProb[Context][1] < Scale);
     
     Context = ((Context << 1) | Symbol) % GetContextSize();
-}
-
-__forceinline interval 
-model::GetInterval(u32 Prob)
-{
-    interval Result = {};
-    
-    for (int I = 0; I < 2; ++I)
-    {
-        u32 Min = I == 0? 0: CumProb[Context][I-1];
-        u32 Max = CumProb[Context][I];
-        if (Prob >= Min && Prob < Max)
-        {
-            Result.Min = Min;
-            Result.Max = Max;
-            Result.Symbol = u8(I);
-            return Result;
-        }
-    }
-    
-    ASSERT(!"TODO(chen): unreachable");
-    return Result;
 }
 
 __forceinline size_t
@@ -347,11 +308,24 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
             //TODO(chen): wtf?
             u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
             
-            interval Interval = Model->GetInterval(Prob);
+            u32 IntervalMin, IntervalMax;
+            u8 DecodedSymbol;
+            if (Prob < Model->CumProb[Model->Context][0])
+            {
+                IntervalMin = 0;
+                IntervalMax = Model->CumProb[Model->Context][0];
+                DecodedSymbol = 0;
+            }
+            else
+            {
+                IntervalMin = Model->CumProb[Model->Context][0];
+                IntervalMax = Model->CumProb[Model->Context][1];
+                DecodedSymbol = 1;
+            }
             
             ASSERT(Low < High);
-            High = Low + (Range * Interval.Max) / Scale - 1;
-            Low = Low + (Range * Interval.Min) / Scale;
+            High = Low + (Range * IntervalMax) / Scale - 1;
+            Low = Low + (Range * IntervalMin) / Scale;
             ASSERT(Low <= High);
             
             for (;;)
@@ -383,7 +357,6 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
             }
             ASSERT(EncodedValue <= High);
             
-            u8 DecodedSymbol = Interval.Symbol;
             OutputByte |= DecodedSymbol << (7-BitI);
             
             Model->Update(DecodedSymbol);
