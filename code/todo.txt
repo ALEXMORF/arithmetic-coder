@@ -11,6 +11,8 @@
 - bitwise encoding [x]
 
 - bitwise processing optimizations []
+-   pure forward (CDF->arith) [x]
+-   remove division for forward ops []
 
 - bitwise modelling []
 

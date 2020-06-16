@@ -114,9 +114,10 @@ model::Init()
 __forceinline void
 model::Update(u8 Symbol)
 {
-    for (int I = Symbol; I < 2; ++I)
+    CumProb[Context][1] += 1;
+    if (Symbol == 0)
     {
-        CumProb[Context][I] += 1;
+        CumProb[Context][0] += 1;
     }
     
     u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
@@ -305,27 +306,22 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         {
             u32 Range = High - Low + 1;
             u32 Scale = Model->CumProb[Model->Context][1];
-            //TODO(chen): wtf?
-            u32 Prob = ((EncodedValue - Low + 1) * Scale - 1) / Range;
+            u32 ArithMid = Low + (Range * Model->CumProb[Model->Context][0]) / Scale - 1;
             
-            u32 IntervalMin, IntervalMax;
+            ASSERT(Low < High);
             u8 DecodedSymbol;
-            if (Prob < Model->CumProb[Model->Context][0])
+            if (EncodedValue <= ArithMid)
             {
-                IntervalMin = 0;
-                IntervalMax = Model->CumProb[Model->Context][0];
+                High = ArithMid;
                 DecodedSymbol = 0;
             }
             else
             {
-                IntervalMin = Model->CumProb[Model->Context][0];
-                IntervalMax = Model->CumProb[Model->Context][1];
+                Low = Low + (Range * Model->CumProb[Model->Context][0]) / Scale;
                 DecodedSymbol = 1;
             }
-            
-            ASSERT(Low < High);
-            High = Low + (Range * IntervalMax) / Scale - 1;
-            Low = Low + (Range * IntervalMin) / Scale;
+            //High = Low + (Range * IntervalMax) / Scale - 1;
+            //Low = Low + (Range * IntervalMin) / Scale;
             ASSERT(Low <= High);
             
             for (;;)

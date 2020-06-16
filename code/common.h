@@ -1,6 +1,7 @@
 #pragma once
 
-#define ASSERT(Value) do { if (!(Value)) *(int *)0 = 0; } while (0)
+//#define ASSERT(Value) do { if (!(Value)) *(int *)0 = 0; } while (0)
+#define ASSERT(Value)
 
 #define internal static
 
