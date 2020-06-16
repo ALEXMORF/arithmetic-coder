@@ -12,7 +12,8 @@
 
 - bitwise processing optimizations []
 -   pure forward (CDF->arith) [x]
--   remove division for forward ops []
+-   remove division for forward ops [x]
+-   better cum table maintainance []
 
 - bitwise modelling []
 

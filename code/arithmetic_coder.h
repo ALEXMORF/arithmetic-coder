@@ -99,13 +99,11 @@ encoder::OutputBit(u8 Bit)
 __forceinline void
 model::Init()
 {
+    u32 Scale = 1 << SCALE_BIT_COUNT;
     for (int ContextI = 0; ContextI < GetContextSize(); ++ContextI)
     {
-        for (int I = 0; I < 2; ++I)
-        {
-            u32 Sum = I == 0? 0: CumProb[ContextI][I-1];
-            CumProb[ContextI][I] = Sum + 1;
-        }
+        CumProb[ContextI][0] = Scale >> 1;
+        CumProb[ContextI][1] = Scale;
     }
     
     Context = 0;
@@ -114,22 +112,16 @@ model::Init()
 __forceinline void
 model::Update(u8 Symbol)
 {
-    CumProb[Context][1] += 1;
-    if (Symbol == 0)
+    u32 Scale = 1 << SCALE_BIT_COUNT;
+    
+    if (Symbol == 0 && CumProb[Context][0] < Scale - 1)
     {
         CumProb[Context][0] += 1;
     }
-    
-    u32 Scale = (1 << SCALE_BIT_COUNT) - 1;
-    
-    //NOTE(chen): if bits exceed, rescale by 1/2
-    if (CumProb[Context][1] >= Scale)
+    else if (Symbol == 1 && CumProb[Context][0] > 1)
     {
-        //NOTE(chen): just reset
-        CumProb[Context][0] = 1;
-        CumProb[Context][1] = 2;
+        CumProb[Context][0] -= 1;
     }
-    ASSERT(CumProb[Context][1] < Scale);
     
     Context = ((Context << 1) | Symbol) % GetContextSize();
 }
@@ -179,9 +171,8 @@ encoder::Encode(u8 *Data, size_t DataSize)
             
             ASSERT(Low < High);
             u32 Range = High - Low + 1;
-            u32 Scale = Model->CumProb[Model->Context][1];
-            High = Low + (Range * IntervalMax) / Scale - 1;
-            Low = Low + (Range * IntervalMin) / Scale;
+            High = Low + ((Range * IntervalMax) >> SCALE_BIT_COUNT) - 1;
+            Low = Low + ((Range * IntervalMin) >> SCALE_BIT_COUNT);
             ASSERT(Low <= High);
             
             for (;;)
@@ -305,8 +296,7 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
         for (int BitI = 0; BitI < 8; ++BitI)
         {
             u32 Range = High - Low + 1;
-            u32 Scale = Model->CumProb[Model->Context][1];
-            u32 ArithMid = Low + (Range * Model->CumProb[Model->Context][0]) / Scale - 1;
+            u32 ArithMid = Low + ((Range * Model->CumProb[Model->Context][0]) >> SCALE_BIT_COUNT) - 1;
             
             ASSERT(Low < High);
             u8 DecodedSymbol;
@@ -317,11 +307,9 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
             }
             else
             {
-                Low = Low + (Range * Model->CumProb[Model->Context][0]) / Scale;
+                Low = Low + ((Range * Model->CumProb[Model->Context][0]) >> SCALE_BIT_COUNT);
                 DecodedSymbol = 1;
             }
-            //High = Low + (Range * IntervalMax) / Scale - 1;
-            //Low = Low + (Range * IntervalMin) / Scale;
             ASSERT(Low <= High);
             
             for (;;)
