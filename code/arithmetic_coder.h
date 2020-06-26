@@ -114,13 +114,14 @@ model::Update(u8 Symbol)
 {
     u32 Scale = 1 << SCALE_BIT_COUNT;
     
-    if (Symbol == 0 && CumProb[Context][0] < Scale - 1)
+    // table update keeping total power of 2: http://cbloomrants.blogspot.com/2008/10/10-05-08-5.html
+    if (Symbol)
     {
-        CumProb[Context][0] += 1;
+        CumProb[Context][0] -= CumProb[Context][0] >> 6;
     }
-    else if (Symbol == 1 && CumProb[Context][0] > 1)
+    else
     {
-        CumProb[Context][0] -= 1;
+        CumProb[Context][0] += (Scale - CumProb[Context][0]) >> 6;
     }
     
     Context = ((Context << 1) | Symbol) % GetContextSize();
