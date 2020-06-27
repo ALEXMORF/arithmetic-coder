@@ -18,6 +18,8 @@ int main()
     
     printf("testing on %s:\n", InputFilename);
     
+    clock_t BeginTick = clock();
+    
     FILE *File = fopen(InputFilename, "rb");
     ASSERT(File);
     
@@ -28,11 +30,15 @@ int main()
     fread(Data, 1, DataSize, File);
     fclose(File);
     
+    clock_t EndTick = clock();
+    f32 LoadTime = f32(EndTick - BeginTick) / f32(CLOCKS_PER_SEC);
+    printf("file loading time: %.2fs\n", LoadTime);
+    
     encoder Encoder = {};
     
-    clock_t BeginTick = clock();
+    BeginTick = clock();
     Encoder.Encode((u8 *)Data, DataSize);
-    clock_t EndTick = clock();
+    EndTick = clock();
     
     f32 CompressionTime = f32(EndTick - BeginTick) / f32(CLOCKS_PER_SEC);
     f32 CompressionRatio = f32(DataSize)/f32(Encoder.OutputSize);
