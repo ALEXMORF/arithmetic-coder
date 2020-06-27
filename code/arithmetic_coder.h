@@ -165,9 +165,19 @@ encoder::Encode(u8 *Data, size_t DataSize)
             u8 Symbol = (Byte & BitMask)? 1: 0;
             BitMask >>= 1;
             
-            u32 IntervalMin = Symbol? Model->Prob[Model->Context]: 0;
-            u32 IntervalMax = Symbol? Scale: Model->Prob[Model->Context];
-            ASSERT(IntervalMin < IntervalMax);
+            u32 IntervalMin, IntervalMax;
+            if (Symbol)
+            {
+                IntervalMin = Model->Prob[Model->Context];
+                IntervalMax = Scale;
+                Model->UpdateOne();
+            }
+            else
+            {
+                IntervalMin = 0;
+                IntervalMax = Model->Prob[Model->Context];
+                Model->UpdateZero();
+            }
             
             ASSERT(Low < High);
             u32 Range = High - Low + 1;
@@ -203,15 +213,6 @@ encoder::Encode(u8 *Data, size_t DataSize)
                 
                 Low = (Low << 1) & CodeBitMask;
                 High = ((High << 1) + 1) & CodeBitMask;
-            }
-            
-            if (Symbol)
-            {
-                Model->UpdateOne();
-            }
-            else
-            {
-                Model->UpdateZero();
             }
         }
     }
