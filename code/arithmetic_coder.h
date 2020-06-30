@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+// for parallel encoder
+#include <thread>
+#include <atomic>
+
 /*NOTE(chen):
 
 precision boundary calculation:
@@ -27,12 +31,21 @@ Scale Bits <= CodeBits - 2
 #define SCALE_BIT_COUNT 14
 #define MODEL_ORDER 16
 
+#define KB(Value) (1024ULL*(Value))
+#define MB(Value) (1024ULL*KB(Value))
+
 #pragma pack(push, 1)
 struct header
 {
     size_t EncodedByteCount;
 };
 #pragma pack(pop)
+
+struct memory
+{
+    u8 *Data;
+    size_t Size;
+};
 
 struct interval
 {
@@ -69,6 +82,7 @@ struct encoder
 struct decoder
 {
     u8 *InputStream;
+    size_t OutputSize;
     u8 StagingByte;
     size_t BytesRead;
     int BitsLeft;
@@ -279,6 +293,7 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     model *Model = (model *)calloc(1, sizeof(model));
     Model->Init();
     
+    OutputSize = Header->EncodedByteCount;
     u8 *Output = (u8 *)calloc(Header->EncodedByteCount, 1);
     
     u32 Scale = 1 << SCALE_BIT_COUNT;
@@ -363,3 +378,176 @@ decoder::Decode(u8 *Bits, size_t EncodedSize)
     return Output;
 }
 
+struct job
+{
+    volatile memory Input;
+    volatile memory Output;
+};
+
+size_t Min(size_t A, size_t B)
+{
+    return A < B? A: B;
+}
+
+memory EncodeParallel(u8 *Data, size_t DataSize)
+{
+    size_t BlockSize = MB(4);
+    
+    size_t JobCount = (DataSize - 1) / BlockSize + 1;
+    job *Jobs = (job *)calloc(JobCount, sizeof(job));
+    std::atomic<size_t> NextJobIndex = 0;
+    
+    // build jobs
+    for (size_t JobI = 0; JobI < JobCount; ++JobI)
+    {
+        job *Job = Jobs + JobI;
+        Job->Input.Data = Data + Min(JobI*BlockSize, DataSize);
+        Job->Input.Size = Min(BlockSize, DataSize-JobI*BlockSize);
+    }
+    
+    auto WorkerFunc = [&]() {
+        size_t JobIndex = NextJobIndex.fetch_add(1);
+        while (JobIndex < JobCount)
+        {
+            job *Job = Jobs + JobIndex;
+            
+            encoder Encoder = {};
+            Encoder.Encode(Job->Input.Data, Job->Input.Size);
+            Job->Output.Data = Encoder.OutputStream;
+            Job->Output.Size = Encoder.OutputSize;
+            
+            JobIndex = NextJobIndex.fetch_add(1);
+        }
+    };
+    
+    // spin up workers
+    int WorkerCount = std::thread::hardware_concurrency() - 1;
+    std::thread *Workers = (std::thread *)calloc(WorkerCount, sizeof(std::thread));
+    for (int WorkerI = 0; WorkerI < WorkerCount; ++WorkerI)
+    {
+        Workers[WorkerI] = std::thread(WorkerFunc);
+    }
+    WorkerFunc();
+    
+    // block until jobs are done
+    for (int WorkerI = 0; WorkerI < WorkerCount; ++WorkerI)
+    {
+        Workers[WorkerI].join();
+    }
+    
+    // composite compressed data
+    size_t OutputSize = 0;
+    u8 *Output = 0;
+    {
+        OutputSize = 0;
+        OutputSize += sizeof(size_t) * (1 + JobCount); // header
+        for (int JobI = 0; JobI < JobCount; ++JobI)
+        {
+            OutputSize += Jobs[JobI].Output.Size;
+        }
+        
+        Output = (u8 *)calloc(OutputSize, 1);
+        size_t Cursor = 0;
+        
+        *(size_t *)(Output+Cursor) = JobCount;
+        Cursor += sizeof(size_t);
+        size_t Offset = 0;
+        for (int JobI = 0; JobI < JobCount; ++JobI)
+        {
+            size_t ChunkSize = Jobs[JobI].Output.Size;
+            *(size_t *)(Output+Cursor) = ChunkSize;
+            Offset += ChunkSize;
+            Cursor += sizeof(size_t);
+        }
+        
+        for (int JobI = 0; JobI < JobCount; ++JobI)
+        {
+            job *Job = Jobs + JobI;
+            memcpy(Output+Cursor, Job->Output.Data, Job->Output.Size);
+            free(Job->Output.Data);
+            Cursor += Job->Output.Size;
+        }
+    }
+    
+    free(Jobs);
+    
+    return {Output, OutputSize};
+}
+
+memory DecodeParallel(u8 *Data, size_t DataSize)
+{
+    size_t *HeaderReader = (size_t *)Data;
+    size_t ChunkCount = *HeaderReader++;
+    Data += (1+ChunkCount) * sizeof(size_t);
+    
+    // build a job for each chunk
+    job *Jobs = (job *)calloc(ChunkCount, sizeof(job));
+    size_t Offset = 0;
+    for (int ChunkI = 0; ChunkI < ChunkCount; ++ChunkI)
+    {
+        size_t ChunkSize = *HeaderReader++;
+        
+        job *Job = Jobs + ChunkI;
+        Job->Input.Data = Data + Offset;
+        Job->Input.Size = ChunkSize;
+        Offset += ChunkSize;
+    }
+    
+    size_t JobCount = ChunkCount;
+    std::atomic<size_t> NextJobIndex = 0;
+    
+    auto WorkerFunc = [&]() {
+        size_t JobIndex = NextJobIndex.fetch_add(1);
+        while (JobIndex < JobCount)
+        {
+            job *Job = Jobs + JobIndex;
+            
+            decoder Decoder = {};
+            u8 *DecodedData = Decoder.Decode(Job->Input.Data, Job->Input.Size);
+            Job->Output.Data = DecodedData;
+            Job->Output.Size = Decoder.OutputSize;
+            
+            JobIndex = NextJobIndex.fetch_add(1);
+        }
+    };
+    
+    // spin up workers
+    int WorkerCount = std::thread::hardware_concurrency() - 1;
+    std::thread *Workers = (std::thread *)calloc(WorkerCount, sizeof(std::thread));
+    for (int WorkerI = 0; WorkerI < WorkerCount; ++WorkerI)
+    {
+        Workers[WorkerI] = std::thread(WorkerFunc);
+    }
+    WorkerFunc();
+    
+    // block until jobs are done
+    for (int WorkerI = 0; WorkerI < WorkerCount; ++WorkerI)
+    {
+        Workers[WorkerI].join();
+    }
+    
+    // composite decompressed data
+    size_t OutputSize = 0;
+    u8 *Output = 0;
+    {
+        OutputSize = 0;
+        for (int JobI = 0; JobI < JobCount; ++JobI)
+        {
+            OutputSize += Jobs[JobI].Output.Size;
+        }
+        
+        Output = (u8 *)calloc(OutputSize, 1);
+        size_t Cursor = 0;
+        for (int JobI = 0; JobI < JobCount; ++JobI)
+        {
+            job *Job = Jobs + JobI;
+            memcpy(Output+Cursor, Job->Output.Data, Job->Output.Size);
+            free(Job->Output.Data);
+            Cursor += Job->Output.Size;
+        }
+    }
+    
+    free(Jobs);
+    
+    return {Output, OutputSize};
+}

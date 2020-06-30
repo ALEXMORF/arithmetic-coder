@@ -16,12 +16,14 @@
 -   pow-2 cum table maintainance [x]
 -   merge modelling branch with coding branch [x]
 
-- range coding extension []
+- paralellize []
+-   why only x4? []
+
+- range coding []
 
 - investigate weird expression for rescaling value during decoding []
 
 - corner cases: not enough inputs for the initial 32-bits []
 - corner cases: ending case []
 
-- parallel version []
 - async API []
