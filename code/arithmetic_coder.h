@@ -389,10 +389,8 @@ size_t Min(size_t A, size_t B)
     return A < B? A: B;
 }
 
-memory EncodeParallel(u8 *Data, size_t DataSize)
+memory EncodeParallel(u8 *Data, size_t DataSize, size_t BlockSize = MB(1))
 {
-    size_t BlockSize = MB(4);
-    
     size_t JobCount = (DataSize - 1) / BlockSize + 1;
     job *Jobs = (job *)calloc(JobCount, sizeof(job));
     std::atomic<size_t> NextJobIndex = 0;

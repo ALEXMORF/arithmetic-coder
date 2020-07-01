@@ -17,8 +17,8 @@ int main()
     //char *InputFilename = "../data/san-miguel-padded.obj";
     //char *InputFilename = "../data/san-miguel-low-poly.obj";
     //char *InputFilename = "../data/conference.obj";
-    //char *InputFilename = "../data/light_probes.data";
-    char *InputFilename = "../data/foliage.data";
+    char *InputFilename = "../data/light_probes.data";
+    //char *InputFilename = "../data/foliage.data";
     //char *InputFilename = "../data/raw-pic.data";
     
     printf("testing on %s:\n", InputFilename);
@@ -68,52 +68,6 @@ int main()
         printf("parallel compression speed: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/ParallelCompressionTime);
         printf("parallel decompression speed: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/ParallelDecompressionTime);
     }
-    
-    encoder Encoder = {};
-    
-    BeginTick = clock();
-    Encoder.Encode(Data, DataSize);
-    EndTick = clock();
-    
-    f32 CompressionTime = GetTimeElapsed(BeginTick, EndTick);
-    f32 CompressionRatio = f32(DataSize)/f32(Encoder.OutputSize);
-    printf("compression time: %.2fs, compression ratio: %.5f\n", 
-           CompressionTime, CompressionRatio);
-    
-    decoder Decoder = {};
-    
-    size_t DecodedSize = 0;
-    BeginTick = clock();
-    u8 *DecodedData = Decoder.Decode(Encoder.OutputStream, Encoder.OutputSize);
-    EndTick = clock();
-    f32 DecompressionTime = GetTimeElapsed(BeginTick, EndTick);
-    printf("decompression time: %.2fs\n", DecompressionTime);
-    
-    size_t CorrectByteCount = 0;
-    size_t FirstErrorOccuring = ~0ull;
-    for (size_t ByteI = 0; ByteI < DataSize; ++ByteI)
-    {
-        if (DecodedData[ByteI] == Data[ByteI])
-        {
-            CorrectByteCount += 1;
-        }
-        else
-        {
-            if (FirstErrorOccuring == (~0ull))
-            {
-                FirstErrorOccuring = ByteI;
-            }
-        }
-    }
-    printf("accuracy = %zu/%zu\n", CorrectByteCount, DataSize);
-    if (FirstErrorOccuring != (~0ull))
-    {
-        printf("First error occuring at byte %zu\n", FirstErrorOccuring);
-    }
-    
-    u32 BytesPerMB = 1024*1024;
-    printf("compression throughput: %.2fmb/s\n", f32(DataSize)/f32(BytesPerMB)/CompressionTime);
-    printf("decompression throughput: %.2fmb/s\n", f32(DataSize)/f32(BytesPerMB)/DecompressionTime);
     
     getchar();
     return 0;

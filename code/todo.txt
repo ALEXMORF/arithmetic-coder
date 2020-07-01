@@ -16,8 +16,7 @@
 -   pow-2 cum table maintainance [x]
 -   merge modelling branch with coding branch [x]
 
-- paralellize []
--   why only x4? []
+- paralellize [x]
 
 - range coding []
 
