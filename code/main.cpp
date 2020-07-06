@@ -11,15 +11,37 @@ float GetTimeElapsed(clock_t BeginTick, clock_t EndTick)
     return f32(EndTick - BeginTick) / f32(CLOCKS_PER_SEC);
 }
 
-int main()
+memory ReadEntireFile(char *Filename)
 {
-    //char *InputFilename = "../data/san-miguel.obj";
-    //char *InputFilename = "../data/san-miguel-padded.obj";
-    //char *InputFilename = "../data/san-miguel-low-poly.obj";
-    //char *InputFilename = "../data/conference.obj";
-    char *InputFilename = "../data/light_probes.data";
-    //char *InputFilename = "../data/foliage.data";
-    //char *InputFilename = "../data/raw-pic.data";
+    memory Result = {};
+    
+    FILE *File = fopen(Filename, "rb");
+    if (File)
+    {
+        fseek(File, 0, SEEK_END);
+        Result.Size = ftell(File);
+        rewind(File);
+        Result.Data = (u8 *)calloc(Result.Size, 1);
+        fread(Result.Data, 1, Result.Size, File);
+        fclose(File);
+    }
+    
+    return Result;
+}
+
+void WriteEntireFile(char *Filename, void *Data, size_t Size)
+{
+    FILE *File = fopen(Filename, "wb");
+    if (File)
+    {
+        fwrite(Data, 1, Size, File);
+        fclose(File);
+    }
+}
+
+void Benchmark()
+{
+    char *InputFilename = "../data/conference.obj";
     
     printf("testing on %s:\n", InputFilename);
     
@@ -68,7 +90,59 @@ int main()
         printf("parallel compression speed: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/ParallelCompressionTime);
         printf("parallel decompression speed: %.2fmb/s\n", f32(DataSize)/f32(1024*1024)/ParallelDecompressionTime);
     }
+}
+
+bool StringEqual(char *A, char *B)
+{
+    return strcmp(A, B) == 0;
+}
+
+int main(int ArgCount, char **Args)
+{
+    if (ArgCount == 4)
+    {
+        bool Encode = false;
+        if (StringEqual(Args[1], "-encode"))
+        {
+            Encode = true;
+        }
+        else if (StringEqual(Args[1], "-decode"))
+        {
+            Encode = false;
+        }
+        else
+        {
+            printf("usage: arith_coder.exe [-encode/-decode] [input file] [output file]\n");
+            return -1;
+        }
+        
+        char *InFilename = Args[2];
+        char *OutFilename = Args[3];
+        
+        memory Input = ReadEntireFile(InFilename);
+        if (!Input.Data)
+        {
+            printf("couldn't read %s\n", InFilename);
+            return -1;
+        }
+        
+        memory Output = {};
+        if (Encode)
+        {
+            Output = EncodeParallel(Input.Data, Input.Size);
+        }
+        else
+        {
+            Output = DecodeParallel(Input.Data, Input.Size);
+        }
+        
+        WriteEntireFile(OutFilename, Output.Data, Output.Size);
+    }
+    else
+    {
+        printf("usage: arith_coder.exe [-encode/-decode] [input file] [output file]\n");
+        return -1;
+    }
     
-    getchar();
     return 0;
 }
