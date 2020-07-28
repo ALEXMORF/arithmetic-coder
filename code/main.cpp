@@ -99,6 +99,9 @@ bool StringEqual(char *A, char *B)
 
 int main(int ArgCount, char **Args)
 {
+#if 1 
+    Benchmark();
+#else
     if (ArgCount == 4)
     {
         bool Encode = false;
@@ -143,6 +146,7 @@ int main(int ArgCount, char **Args)
         printf("usage: arith_coder.exe [-encode/-decode] [input file] [output file]\n");
         return -1;
     }
+#endif
     
     return 0;
 }
